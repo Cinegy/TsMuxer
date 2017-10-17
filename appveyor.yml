@@ -1,0 +1,23 @@
+version: 0.0.{build}
+configuration: Release
+platform: Any CPU
+assembly_info:
+  patch: true
+  file: '**\AssemblyInfo.*'
+  assembly_version: '{version}'
+  assembly_file_version: '{version}'
+  assembly_informational_version: '{version}'
+before_build:
+- cmd: nuget restore
+build:
+  project: Cinegy.TsDecoder.sln
+  verbosity: minimal
+after_build:
+- cmd: >-
+    7z a Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsDecoder\bin\release\Cinegy.TsDecoder.exe
+
+    appveyor PushArtifact Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip
+    
+    7z a Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsDecoder\bin\release
+
+    appveyor PushArtifact Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip
