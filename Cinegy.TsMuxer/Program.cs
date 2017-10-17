@@ -42,7 +42,7 @@ namespace Cinegy.TsMuxer
 
         private enum ExitCodes
         {
-            UrlAccessDenied = 102,
+            SubPidError = 102,
             UnknownError = 2000
         }
 
@@ -53,6 +53,7 @@ namespace Cinegy.TsMuxer
         private static bool _mainPacketsStarted;
         private static bool _subPacketsStarted;
         private static bool _pendingExit;
+        private static List<int> _subPids = new List<int>();
         private static bool _suppressOutput;
 
         private static ulong _referencePcr;
@@ -63,9 +64,11 @@ namespace Cinegy.TsMuxer
 
         private const int TsPacketSize = 188;
         private const short SyncByte = 0x47;
+
         private static StreamOptions _options;
         private static RingBuffer _ringBuffer = new RingBuffer(1000);
         private static RingBuffer _subRingBuffer = new RingBuffer(1000);
+        private static Queue<byte[]> _subPidQueue = new Queue<byte[]>(1000);
 
         private static int Main(string[] args)
         {
@@ -117,6 +120,19 @@ namespace Cinegy.TsMuxer
             _options = options;
 
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
+
+            foreach(var pid in _options.SubPids.Split(','))
+            {
+                int intPid = 0;
+                if (int.TryParse(pid, out intPid))
+                    _subPids.Add(intPid);
+            }
+
+            if (_subPids.Count < 1)
+            {
+                Console.WriteLine("Provided sub PIDs argument did not contain one or more comma separated numbers - please check format");
+                return (int)ExitCodes.SubPidError;
+            }
 
             _outputUdpClient = PrepareOutputClient(_options.OutputMulticastAddress,_options.OuputMulticastPort,_options.MulticastAdapterAddress);
             _mainInputUdpClient = StartListeningToPrimaryStream();
@@ -214,6 +230,13 @@ namespace Cinegy.TsMuxer
                         }
 
                         if (dataBuffer == null) continue;
+
+                        //check buffer to see if any PIDs contain NULL PID that can be swapped...
+                        var packets = Factory.GetTsPacketsFromData(dataBuffer);
+                        foreach(var packet in packets)
+                        {
+                            //TODO: filter and inject
+                        }
                         
                         _outputUdpClient.Send(dataBuffer, dataSize);                        
 
@@ -227,80 +250,7 @@ namespace Cinegy.TsMuxer
 
             //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = "Stopping analysis thread due to exit request." });
         }
-
-        private static void ProcessQueueWorkerThreadPcrTimed()
-        {
-            var dataBuffer = new byte[12 + (188 * 7)];
-
-            while (_pendingExit != true)
-            {
-                try
-                {
-                    lock (_ringBuffer)
-                    {
-                        int dataSize;
-                        ulong timestamp;
-                        var capacity = _ringBuffer.Remove(ref dataBuffer, out dataSize, out timestamp);
-
-                        if (capacity > 0)
-                        {
-                            dataBuffer = new byte[capacity];
-                            continue;
-                        }
-
-                        if (dataBuffer == null) continue;
-
-                        if (_lastPcr < 1)
-                        {
-                            continue;
-                        }
-
-                        //var elapsedClock = (long)((DateTime.UtcNow.Ticks * 2.7) - _referenceTime);
-
-                        var waitTime = (long)(timestamp - (ulong)(DateTime.UtcNow.Ticks)) / TimeSpan.TicksPerMillisecond;
-
-                        if (_longestWait < waitTime) _longestWait = waitTime;
-
-                        if ((waitTime < 8000) & (waitTime > 0))
-                        {
-                            if (waitTime > 40)
-                            {
-                                Console.WriteLine($"Waittime: {waitTime}");
-                                Console.WriteLine($"Buffer fullness: {_ringBuffer.BufferFullness}");
-                                Console.WriteLine($"Sleeping for: {waitTime}");
-                            }
-
-                            Thread.Sleep((int)waitTime);
-
-                            if (_ringBuffer.BufferFullness < 40)
-                            {
-                                //buffer exhausted - reset
-                                //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = $@"Buffer was exhausted - resetting timers" });
-                                _lastPcr = 0;
-                            }
-
-                            _outputUdpClient.Send(dataBuffer, dataBuffer.Length);
-                        }
-                        else if (waitTime > -50)
-                        {
-                            _outputUdpClient.Send(dataBuffer, dataBuffer.Length);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Crazy wait time! " + waitTime);
-                        }
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = $@"Unhandled exception within network receiver: {ex.Message}" });
-                }
-            }
-
-            //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = "Stopping analysis thread due to exit request." });
-        }
-
+        
         private static void ProcessSubQueueWorkerThread()
         {
             var dataBuffer = new byte[12 + (188 * 7)];
@@ -330,10 +280,23 @@ namespace Cinegy.TsMuxer
 
                         if (dataBuffer == null) continue;
 
-                        lock (_outputUdpClient)
+                        //check to see if there are any specific TS packets by PIDs we want to select
+
+                        var packets = Factory.GetTsPacketsFromData(dataBuffer);
+
+                        foreach(var packet in packets)
                         {
-                            _outputUdpClient.Send(dataBuffer, dataSize);
+                            if(_subPids.Contains(packet.Pid))
+                            {
+                                //this pid is selected for mapping across... add to PID buffer to merge replacing NULL pid
+                                _subPidQueue.Enqueue(dataBuffer); //TODO: Add byte serialization support for a packet object, so just that PID can go into buffer
+                            }
                         }
+
+                        //lock (_outputUdpClient)
+                        //{
+                        //    _outputUdpClient.Send(dataBuffer, dataSize);
+                        //}
                     }
                 }
                 catch (Exception ex)
