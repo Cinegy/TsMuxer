@@ -68,7 +68,7 @@ namespace Cinegy.TsMuxer
         private static StreamOptions _options;
         private static RingBuffer _ringBuffer = new RingBuffer(1000);
         private static RingBuffer _subRingBuffer = new RingBuffer(1000);
-        private static Queue<byte[]> _subPidQueue = new Queue<byte[]>(1000);
+        private static Queue<TsPacket> _subPidQueue = new Queue<TsPacket>(1000);
 
         private static int Main(string[] args)
         {
@@ -231,11 +231,20 @@ namespace Cinegy.TsMuxer
 
                         if (dataBuffer == null) continue;
 
-                        //check buffer to see if any PIDs contain NULL PID that can be swapped...
-                        var packets = Factory.GetTsPacketsFromData(dataBuffer);
-                        foreach(var packet in packets)
+                        //see if there is any data waiting to get switched into the mux...
+                        if (_subPidQueue.Count > 0)
                         {
-                            //TODO: filter and inject
+                            //check buffer to see if any PIDs contain NULL PID that can be swapped...
+                            var packets = Factory.GetTsPacketsFromData(dataBuffer);
+                            foreach (var packet in packets)
+                            {
+                                if (packet.Pid == (short)PidType.NullPid)
+                                {
+                                    //candidate for wiping with any data backed up for muxing in
+                                    var subPidPacket = _subPidQueue.Dequeue();
+                                    Buffer.BlockCopy(subPidPacket.SourceData, 0, dataBuffer, packet.SourceBufferIndex, TsPacketSize);
+                                }
+                            }
                         }
                         
                         _outputUdpClient.Send(dataBuffer, dataSize);                        
@@ -289,7 +298,7 @@ namespace Cinegy.TsMuxer
                             if(_subPids.Contains(packet.Pid))
                             {
                                 //this pid is selected for mapping across... add to PID buffer to merge replacing NULL pid
-                                _subPidQueue.Enqueue(dataBuffer); //TODO: Add byte serialization support for a packet object, so just that PID can go into buffer
+                                _subPidQueue.Enqueue(packet);
                             }
                         }
 

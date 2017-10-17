@@ -36,10 +36,6 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Cinegy.TsDecoder, Version=1.0.41.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\Cinegy.TsDecoder.1.0.41\lib\net452\Cinegy.TsDecoder.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="CommandLine, Version=2.0.275.0, Culture=neutral, PublicKeyToken=de6f01bd326f8c32, processorArchitecture=MSIL">
       <HintPath>..\packages\CommandLineParser.2.1.1-beta\lib\net45\CommandLine.dll</HintPath>
       <Private>True</Private>
@@ -73,6 +69,12 @@
   </ItemGroup>
   <ItemGroup>
     <WCFMetadata Include="Service References\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\TsDecoder\Cinegy.TsDecoder\Cinegy.TsDecoder.csproj">
+      <Project>{838e853d-214b-406f-843d-a76a1fe42c6c}</Project>
+      <Name>Cinegy.TsDecoder</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="..\packages\Fody.1.29.4\build\dotnet\Fody.targets" Condition="Exists('..\packages\Fody.1.29.4\build\dotnet\Fody.targets')" />
