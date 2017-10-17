@@ -3,3 +3,6 @@
 /.vs
 /packages
 /Cinegy.TsDecoder/*.user
+/Cinegy.TsMuxer/bin
+/Cinegy.TsMuxer/obj
+/Cinegy.TsMuxer/*.user
