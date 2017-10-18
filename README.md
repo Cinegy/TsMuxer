@@ -12,41 +12,57 @@ Just run the EXE from inside a command-prompt, and the application will just run
 Run with a --help argument, and you will get interactive help information like this:
 
 ```
-Cinegy.TsMuxer 0.0.13.0
+C:\Program Files\Cinegy>Cinegy.TsMuxer.exe
+Cinegy 0.0.0.1
 Copyright cCinegy GmbH 2017
 
 ERROR(S):
-  Required option 'm, multicastaddress' is missing.
-  Required option 'g, multicastgroup' is missing.
-  Required option 'u, urlidentifier' is missing.
+  Required option 'm, mainmulticastaddress' is missing.
+  Required option 'p, mainmulticastport' is missing.
+  Required option 'n, submulticastaddress' is missing.
+  Required option 'q, submulticastport' is missing.
+  Required option 'o, outputmulticastaddress' is missing.
+  Required option 'r, outputmulticastport' is missing.
+  Required option 's, subpids' is missing.
 
-  -a, --adapter              IP address of the adapter to serve HTTP requests from (if not set, tries first binding adapter).
-  -b, --multicastadapter     IP address of the adapter to listen for multicast data (if not set, tries first binding adapter).
-  -m, --multicastaddress     Required. Multicast address to subscribe this instance to.
-  -g, --multicastgroup       Required. Multicast group (port number) to subscribe this instance to.
-  -n, --nortpheaders         (Default: false) Optional instruction to skip the expected 12 byte RTP headers (meaning
-                             plain MPEGTS inside UDP is expected
-  -s, --buffersize           (Default: 100000) Optional instruction to control the number of TS packets cached within
-                             random access window buffer
-  -u, --urlidentifier        Required. Text identifier to append to base URL for identifying this specific stream.
-  -q, --quiet                (Default: false) Don't print anything to the console
-  -l, --logfile              Optional file to record events to.
-  -d, --descriptortags       (Default: ) Comma separated tag values added to all log entries for instance and machine
-                             identification
-  -e, --timeserieslogging    Record time slice metric data to.
-  -v, --verboselogging       Creates event logs for all discontinuities and skips.
-  -p, --port                 (Default: 8082) Port Number to listen for web serving requests (8082 if not set).
+  -a, --multicastadapter          IP address of the adapter to listen for multicast data (if not set, tries first
+                                  binding adapter).
 
-  --help                     Display this help screen.
-  --version                  Display version information.
+  -m, --mainmulticastaddress      Required. Primary multicast address to subscribe this instance to.
+
+  -p, --mainmulticastport         Required. Primary multicast port number to subscribe this instance to.
+
+  -n, --submulticastaddress       Required. Primary multicast address to subscribe this instance to.
+
+  -q, --submulticastport          Required. Primary multicast port number to subscribe this instance to.
+
+  -o, --outputmulticastaddress    Required. Output multicast address to send results to.
+
+  -r, --outputmulticastport       Required. Output multicast port number to send results to.
+
+  -h, --nortpheaders              (Default: false) Optional instruction to skip the expected 12 byte RTP headers
+                                  (meaning plain MPEGTS inside UDP is expected
+
+  -s, --subpids                   Required. Comma separated list of sub stream PIDs to map into master
+
+  -l, --logfile                   Optional file to record events to.
+
+  -d, --descriptortags            (Default: ) Comma separated tag values added to all log entries for instance and
+                                  machine identification
+
+  -t, --telemetry                 Enable integrated telemetry
+
+  --help                          Display this help screen.
+
+  --version                       Display version information.
 
 Hit enter to quit
 ```
 
 Just to make your life easier, we auto-build this using AppVeyor - here is how we are doing right now: 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/sm2dhprb2sj27j0u?svg=true)](https://ci.appveyor.com/project/cinegy/Cinegy.TsMuxer/branch/master)
+[![Build status](https://ci.appveyor.com/api/projects/status/njky44r567b8x634?svg=true)](https://ci.appveyor.com/project/cinegy/tsmuxer)
 
 You can check out the latest compiled binary from the master or pre-master code here:
 
-[AppVeyor RtpHttpGateway Project Builder](https://ci.appveyor.com/project/cinegy/cinegy.TsMuxer/build/artifacts)
+[Download TSMuxer Binary Artifacts](https://ci.appveyor.com/project/cinegy/tsmuxer/build/artifacts)

@@ -10,14 +10,14 @@ assembly_info:
 before_build:
 - cmd: nuget restore
 build:
-  project: Cinegy.TsDecoder.sln
+  project: Cinegy.TsMuxer.sln
   verbosity: minimal
 after_build:
 - cmd: >-
-    7z a Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsDecoder\bin\release\Cinegy.TsDecoder.exe
+    7z a Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsMuxer\bin\release\Cinegy.TsMuxer.exe
 
-    appveyor PushArtifact Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip
+    appveyor PushArtifact Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%.zip
     
-    7z a Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsDecoder\bin\release
+    7z a Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsMuxer\bin\release
 
-    appveyor PushArtifact Cinegy.TsDecoder-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip
+    appveyor PushArtifact Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip
