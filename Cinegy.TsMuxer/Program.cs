@@ -27,6 +27,7 @@ using System.Runtime;
 using Cinegy.TsDecoder.Buffers;
 using Cinegy.TsDecoder.TransportStream;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 
 namespace Cinegy.TsMuxer
 {
@@ -59,7 +60,6 @@ namespace Cinegy.TsMuxer
         private static ulong _referencePcr;
         private static ulong _referenceTime;
         private static ulong _lastPcr;
-        private static long _longestWait;
         private static readonly TsPacketFactory Factory = new TsPacketFactory();
 
         private const int TsPacketSize = 188;
@@ -68,7 +68,7 @@ namespace Cinegy.TsMuxer
         private static StreamOptions _options;
         private static RingBuffer _ringBuffer = new RingBuffer(1000);
         private static RingBuffer _subRingBuffer = new RingBuffer(1000);
-        private static Queue<TsPacket> _subPidQueue = new Queue<TsPacket>(1000);
+        private static RingBuffer _subPidBuffer = new RingBuffer(1000, TsPacketSize);
 
         private static int Main(string[] args)
         {
@@ -146,13 +146,19 @@ namespace Cinegy.TsMuxer
 
             subQueueThread.Start();
 
+            Console.CursorVisible = false;
 
+            Thread.Sleep(40);
             while (!_pendingExit)
             {
-                Thread.Sleep(100);
-                
-                Console.SetCursorPosition(0, 11);
+                Console.SetCursorPosition(0, 8);                
+                Console.WriteLine($"Primary Stream Buffer fullness: {_ringBuffer.BufferFullness}\t\t\t");
+                Console.WriteLine($"Sub Stream Buffer fullness: {_subRingBuffer.BufferFullness}\t\t\t");
+                Console.WriteLine($"Sub Stream PID queue depth: {_subPidBuffer.BufferFullness}\t\t\t");
+                Thread.Sleep(40);
             }
+
+            Console.CursorVisible = true;
 
             return 0;
 
@@ -230,21 +236,40 @@ namespace Cinegy.TsMuxer
                         }
 
                         if (dataBuffer == null) continue;
-
-                        //see if there is any data waiting to get switched into the mux...
-                        if (_subPidQueue.Count > 0)
+                                               
+                        if (_subPidBuffer.BufferFullness > 0)
                         {
                             //check buffer to see if any PIDs contain NULL PID that can be swapped...
-                            var packets = Factory.GetTsPacketsFromData(dataBuffer);
+                            var packets = Factory.GetTsPacketsFromData(dataBuffer, dataSize);
                             foreach (var packet in packets)
                             {
                                 if (packet.Pid == (short)PidType.NullPid)
                                 {
                                     //candidate for wiping with any data backed up for muxing in
-                                    var subPidPacket = _subPidQueue.Dequeue();
-                                    Buffer.BlockCopy(subPidPacket.SourceData, 0, dataBuffer, packet.SourceBufferIndex, TsPacketSize);
+                                    byte[] subPidPacketBuffer = new byte[TsPacketSize];
+                                    int subPidDataSize = 0;
+                                    ulong subPidTimeStamp = 0;
+                                    
+                                    //see if there is any data waiting to get switched into the mux...
+                                    lock (_subPidBuffer)
+                                    {
+                                        if (_subPidBuffer.BufferFullness < 1) break;
+                                        var subPidPacketDataReturned = _subPidBuffer.Remove(ref subPidPacketBuffer, out subPidDataSize, out subPidTimeStamp);
+                                        if (subPidPacketDataReturned != 0 && subPidPacketDataReturned != TsPacketSize)
+                                        {
+                                            throw new InvalidDataException("Sub PID data seems to not be size of TS packet!");
+                                        }
+                                    }
+
+                                if (packet.SourceBufferIndex % 188 != 0)
+                                    {
+                                        Debug.WriteLine("Misaligned packet");
+                                    }
+
+                                    Buffer.BlockCopy(subPidPacketBuffer, 0, dataBuffer, packet.SourceBufferIndex, TsPacketSize);
                                 }
                             }
+                            
                         }
                         
                         _outputUdpClient.Send(dataBuffer, dataSize);                        
@@ -268,17 +293,20 @@ namespace Cinegy.TsMuxer
             {
                 try
                 {
+                    if (_subRingBuffer.BufferFullness < 1)
+                    {
+                        Thread.Sleep(1);
+                        continue;
+                    }
+
                     lock (_subRingBuffer)
                     {
+                        if (_subRingBuffer.BufferFullness < 1)
+                            continue;
+
                         int dataSize;
                         ulong timestamp;
-
-                        if (_subRingBuffer.BufferFullness < 1)
-                        {
-                            Thread.Sleep(1);
-                            continue;
-                        }
-
+                        
                         var capacity = _subRingBuffer.Remove(ref dataBuffer, out dataSize, out timestamp);
 
                         if (capacity > 0)
@@ -291,14 +319,16 @@ namespace Cinegy.TsMuxer
 
                         //check to see if there are any specific TS packets by PIDs we want to select
 
-                        var packets = Factory.GetTsPacketsFromData(dataBuffer);
+                        var packets = Factory.GetTsPacketsFromData(dataBuffer,dataSize,false,true);
 
                         foreach(var packet in packets)
                         {
                             if(_subPids.Contains(packet.Pid))
                             {
                                 //this pid is selected for mapping across... add to PID buffer to merge replacing NULL pid
-                                _subPidQueue.Enqueue(packet);
+                                var buffer = new byte[packet.SourceData.Length];
+                                Buffer.BlockCopy(packet.SourceData, 0, buffer, 0, packet.SourceData.Length);
+                                _subPidBuffer.Add(ref buffer);
                             }
                         }
 
@@ -476,12 +506,8 @@ namespace Cinegy.TsMuxer
                 }
 
                 try
-                {          
-                    if(data.Length > 1328)
-                    {
-                        PrintToConsole($"Bad size: {data.Length}");
-                    }      
-                      _subRingBuffer.Add(ref data); 
+                {
+                    _subRingBuffer.Add(ref data); 
                 }
                 catch (Exception ex)
                 {
