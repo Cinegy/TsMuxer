@@ -1,5 +1,12 @@
 ﻿# Cinegy.TsMuxer
 
+## What is it?
+
+TSMuxer is a simple tool, designed to help make testing easier for people with two streams they need to merge - for example, a main playout stream and a smaller subtitling stream.
+
+It's not 'production ready' - it's really designed as a stand-in for a full quality muxer that would be used at a broadcast site for light duties in a lab or during demos or training. 
+
+However, it works - although at the moment it is young and has not spent long being tuned or having any features added to allow fine-grained controls.
 
 ## How easy is it?
 
@@ -41,7 +48,7 @@ ERROR(S):
   -r, --outputmulticastport       Required. Output multicast port number to send results to.
 
   -h, --nortpheaders              (Default: false) Optional instruction to skip the expected 12 byte RTP headers
-                                  (meaning plain MPEGTS inside UDP is expected
+                                  (meaning plain MPEGTS inside UDP is expected)
 
   -s, --subpids                   Required. Comma separated list of sub stream PIDs to map into master
 
