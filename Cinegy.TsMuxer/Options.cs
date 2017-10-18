@@ -54,6 +54,11 @@ namespace Cinegy.TsMuxer
         HelpText = "Optional instruction to skip the expected 12 byte RTP headers (meaning plain MPEGTS inside UDP is expected")]
         public bool NoRtpHeaders { get; set; }
 
-       
+
+        [Option('s', "subpids", Required = true,
+        HelpText = "Comma separated list of sub stream PIDs to map into master")]
+        public string SubPids { get; set; }
+
+
     }
 }
