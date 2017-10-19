@@ -24,8 +24,10 @@ using System.Threading;
 using CommandLine;
 using static System.String;
 using System.Runtime;
+using Cinegy.TsDecoder;
 using Cinegy.TsDecoder.Buffers;
 using Cinegy.TsDecoder.TransportStream;
+using Cinegy.TsDecoder.Tables;
 using System.Diagnostics;
 using System.Collections.Concurrent;
 
@@ -69,6 +71,9 @@ namespace Cinegy.TsMuxer
         private static RingBuffer _ringBuffer = new RingBuffer(1000);
         private static RingBuffer _subRingBuffer = new RingBuffer(1000);
         private static RingBuffer _subPidBuffer = new RingBuffer(1000, TsPacketSize);
+        private static ProgramMapTable _subPidPmt;
+
+        private static TsDecoder.TransportStream.TsDecoder _subPidDecoder = new TsDecoder.TransportStream.TsDecoder();
 
         private static int Main(string[] args)
         {
@@ -236,11 +241,21 @@ namespace Cinegy.TsMuxer
                         }
 
                         if (dataBuffer == null) continue;
-                                               
+                        
+                        var packets = Factory.GetTsPacketsFromData(dataBuffer, dataSize);
+                        
+                        //check for any PMT packets, and adjust them to reflect the new reality...
+                        foreach(var packet in packets)
+                        {
+                            if(packet.Pid == _subPidPmt.Pid)
+                            {
+
+                            }
+                        }
+
+                        //insert any queued
                         if (_subPidBuffer.BufferFullness > 0)
                         {
-                            //check buffer to see if any PIDs contain NULL PID that can be swapped...
-                            var packets = Factory.GetTsPacketsFromData(dataBuffer, dataSize);
                             foreach (var packet in packets)
                             {
                                 if (packet.Pid == (short)PidType.NullPid)
@@ -319,10 +334,22 @@ namespace Cinegy.TsMuxer
 
                         //check to see if there are any specific TS packets by PIDs we want to select
 
-                        var packets = Factory.GetTsPacketsFromData(dataBuffer,dataSize,false,true);
+                        var packets = Factory.GetTsPacketsFromData(dataBuffer,dataSize,true,true);
 
                         foreach(var packet in packets)
                         {
+                            if(_subPidDecoder.GetSelectedPmt(1001)== null)
+                            {
+                                _subPidDecoder.AddPackets(packets);
+                            }
+                            else
+                            {
+                                if(_subPidPmt==null)
+                                {
+                                    _subPidPmt = _subPidDecoder.GetSelectedPmt();
+                                }
+                            }                           
+
                             if(_subPids.Contains(packet.Pid))
                             {
                                 //this pid is selected for mapping across... add to PID buffer to merge replacing NULL pid
