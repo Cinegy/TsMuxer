@@ -49,6 +49,8 @@ namespace Cinegy.TsMuxer
             UnknownError = 2000
         }
 
+        private const uint CRC32_POLYNOMIAL = ((0x02608EDB << 1) | 1);
+        
         private static UdpClient _mainInputUdpClient;
         private static UdpClient _subInputUdpClient;
         private static UdpClient _outputUdpClient;
@@ -71,10 +73,12 @@ namespace Cinegy.TsMuxer
         private static RingBuffer _ringBuffer = new RingBuffer(1000);
         private static RingBuffer _subRingBuffer = new RingBuffer(1000);
         private static RingBuffer _subPidBuffer = new RingBuffer(1000, TsPacketSize);
-        private static ProgramMapTable _subPidPmt;
+        private static ProgramMapTable _subStreamSourcePmt;
+        private static ProgramMapTable _mainStreamTargetPmt;
 
-        private static TsDecoder.TransportStream.TsDecoder _subPidDecoder = new TsDecoder.TransportStream.TsDecoder();
-
+        private static TsDecoder.TransportStream.TsDecoder _subStreamDecoder = new TsDecoder.TransportStream.TsDecoder();
+        private static TsDecoder.TransportStream.TsDecoder _mainStreamDecoder = new TsDecoder.TransportStream.TsDecoder();
+        
         private static int Main(string[] args)
         {
             try
@@ -138,6 +142,8 @@ namespace Cinegy.TsMuxer
                 Console.WriteLine("Provided sub PIDs argument did not contain one or more comma separated numbers - please check format");
                 return (int)ExitCodes.SubPidError;
             }
+
+            _suppressOutput = _options.Silent; //only supresses extra logging to screen, not dynamic output
 
             _outputUdpClient = PrepareOutputClient(_options.OutputMulticastAddress,_options.OuputMulticastPort,_options.MulticastAdapterAddress);
             _mainInputUdpClient = StartListeningToPrimaryStream();
@@ -243,24 +249,80 @@ namespace Cinegy.TsMuxer
                         if (dataBuffer == null) continue;
                         
                         var packets = Factory.GetTsPacketsFromData(dataBuffer, dataSize);
-                        
-                        //check for any PMT packets, and adjust them to reflect the new reality...
-                        foreach(var packet in packets)
-                        {
-                            if(packet.Pid == _subPidPmt.Pid)
-                            {
 
+                        //use decoder to register default program (muxing always happens on default program)
+                        if (_mainStreamDecoder.GetSelectedPmt() == null)
+                        {
+                            _mainStreamDecoder.AddPackets(packets);
+                        }
+                        else
+                        {
+                            if (_mainStreamTargetPmt == null && _subStreamSourcePmt != null)
+                            {
+                                _mainStreamTargetPmt = _mainStreamDecoder.GetSelectedPmt();
+
+                                var pmtSpaceNeeded = 0;
+                                foreach (var esinfo in _subStreamSourcePmt.EsStreams)
+                                {
+                                    if (_subPids.Contains(esinfo.ElementaryPid))
+                                    {
+                                        pmtSpaceNeeded += esinfo.SourceData.Length;
+                                    }
+                                }
+
+                                if ((_mainStreamTargetPmt.SectionLength + pmtSpaceNeeded) > (TsPacketSize - 12))
+                                {
+                                    throw new InvalidDataException("Cannot add to PMT - no room (packet spanned PMT not supported)");
+                                }
                             }
                         }
 
-                        //insert any queued
+                        //check for any PMT packets, and adjust them to reflect the new muxed reality...
+                        foreach (var packet in packets)
+                        {
+                            if(_mainStreamTargetPmt!=null && packet.Pid == _mainStreamTargetPmt.Pid)
+                            {
+                                //this is the PMT for the target program on the target stream - patch in the substream PID entries
+                                foreach(var esinfo in _subStreamSourcePmt.EsStreams)
+                                {
+                                    if(_subPids.Contains(esinfo.ElementaryPid))
+                                    {
+                                        //locate current SectionLength bytes in databuffer
+                                        var pos = packet.SourceBufferIndex + 4; //advance to start of PMT data structure (past TS header)
+                                        var pointerField = dataBuffer[pos];
+                                        pos += pointerField; //advance by pointer field
+                                        var SectionLength =  (short)(((dataBuffer[pos + 2] & 0x3) << 8) + dataBuffer[pos + 3]); //get current length
+
+                                        //increase length value by esinfo length
+                                        var extendedSectionLength = (short)(SectionLength + (short)esinfo.SourceData.Length);
+
+                                        //set back new length into databuffer                                        
+                                        var bytes = BitConverter.GetBytes(extendedSectionLength);
+                                        dataBuffer[pos + 2] = (byte)((dataBuffer[pos + 2] & 0xFC) + (byte)(bytes[1] & 0x3));
+                                        dataBuffer[pos + 3] = bytes[0];
+                                        
+                                        //copy esinfo source data to end of program block in pmt
+                                        Buffer.BlockCopy(esinfo.SourceData, 0, dataBuffer, packet.SourceBufferIndex + 4 + pointerField + SectionLength, esinfo.SourceData.Length);
+                                        
+                                        //correct CRC after each extension
+                                        var crcBytes = BitConverter.GetBytes(GenerateCRC(ref dataBuffer, pos + 1, extendedSectionLength - 1));
+                                        dataBuffer[packet.SourceBufferIndex + 4 + pointerField + extendedSectionLength] = crcBytes[3];
+                                        dataBuffer[packet.SourceBufferIndex + 4 + pointerField + extendedSectionLength +1] = crcBytes[2];
+                                        dataBuffer[packet.SourceBufferIndex + 4 + pointerField + extendedSectionLength +2] = crcBytes[1];
+                                        dataBuffer[packet.SourceBufferIndex + 4 + pointerField + extendedSectionLength + 3] = crcBytes[0];
+                                    }
+                                }
+                            }
+                        }
+
+                        //insert any queued filtered sub PID packets
                         if (_subPidBuffer.BufferFullness > 0)
                         {
                             foreach (var packet in packets)
                             {
                                 if (packet.Pid == (short)PidType.NullPid)
                                 {
-                                    //candidate for wiping with any data backed up for muxing in
+                                    //candidate for wiping with any data queued up for muxing in
                                     byte[] subPidPacketBuffer = new byte[TsPacketSize];
                                     int subPidDataSize = 0;
                                     ulong subPidTimeStamp = 0;
@@ -268,27 +330,27 @@ namespace Cinegy.TsMuxer
                                     //see if there is any data waiting to get switched into the mux...
                                     lock (_subPidBuffer)
                                     {
-                                        if (_subPidBuffer.BufferFullness < 1) break;
+                                        if (_subPidBuffer.BufferFullness < 1) break; //double check here because prior check was not thread safe
                                         var subPidPacketDataReturned = _subPidBuffer.Remove(ref subPidPacketBuffer, out subPidDataSize, out subPidTimeStamp);
                                         if (subPidPacketDataReturned != 0 && subPidPacketDataReturned != TsPacketSize)
                                         {
-                                            throw new InvalidDataException("Sub PID data seems to not be size of TS packet!");
+                                            PrintToConsole("Sub PID data seems to not be size of TS packet!");
+                                            return;
                                         }
                                     }
 
-                                if (packet.SourceBufferIndex % 188 != 0)
+                                    if (packet.SourceBufferIndex % 188 != 0)
                                     {
-                                        Debug.WriteLine("Misaligned packet");
+                                        PrintToConsole("Misaligned packet");
+                                        return;
                                     }
 
                                     Buffer.BlockCopy(subPidPacketBuffer, 0, dataBuffer, packet.SourceBufferIndex, TsPacketSize);
                                 }
                             }
-                            
                         }
                         
                         _outputUdpClient.Send(dataBuffer, dataSize);                        
-
                     }
                 }
                 catch (Exception ex)
@@ -338,15 +400,15 @@ namespace Cinegy.TsMuxer
 
                         foreach(var packet in packets)
                         {
-                            if(_subPidDecoder.GetSelectedPmt(1001)== null)
+                            if(_subStreamDecoder.GetSelectedPmt()== null)
                             {
-                                _subPidDecoder.AddPackets(packets);
+                                _subStreamDecoder.AddPackets(packets);
                             }
                             else
                             {
-                                if(_subPidPmt==null)
+                                if(_subStreamSourcePmt == null)
                                 {
-                                    _subPidPmt = _subPidDecoder.GetSelectedPmt();
+                                    _subStreamSourcePmt = _subStreamDecoder.GetSelectedPmt();
                                 }
                             }                           
 
@@ -457,7 +519,7 @@ namespace Cinegy.TsMuxer
             }
             catch (Exception ex)
             {
-                Debug.WriteLine("Problem in FindSync algorithm... : ", ex.Message);
+                PrintToConsole($"Problem in FindSync algorithm... : {ex.Message}");
                 throw;
             }
         }
@@ -543,7 +605,26 @@ namespace Cinegy.TsMuxer
                 }
             }
         }
-        
+
+        private static uint GenerateCRC(ref byte[] dataBuffer, int position, int length )
+        {
+            var endPos = position + length;
+            uint crc = uint.MaxValue;
+
+            for (int i = position; i < endPos; i++)
+            {
+                for (int masking = 0x80; masking != 0; masking >>= 1)
+                {
+                    uint carry = crc & 0x80000000;
+                    crc <<= 1;
+                    if (!(carry==0) ^ !((dataBuffer[i] & masking)==0))
+                        crc ^= CRC32_POLYNOMIAL;
+                }
+            }           
+
+            return crc;
+        }
+
         private static void PrintToConsole(string message)
         {
             if (_suppressOutput)
