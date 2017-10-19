@@ -36,8 +36,8 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Cinegy.TsDecoder, Version=2.0.85.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\Cinegy.TsDecoder.2.0.85\lib\netstandard1.3\Cinegy.TsDecoder.dll</HintPath>
+    <Reference Include="Cinegy.TsDecoder, Version=2.0.86.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\Cinegy.TsDecoder.2.0.86\lib\netstandard1.3\Cinegy.TsDecoder.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="CommandLine, Version=2.0.275.0, Culture=neutral, PublicKeyToken=de6f01bd326f8c32, processorArchitecture=MSIL">
