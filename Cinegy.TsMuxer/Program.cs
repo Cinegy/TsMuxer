@@ -355,7 +355,7 @@ namespace Cinegy.TsMuxer
                 }
                 catch (Exception ex)
                 {
-                    //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = $@"Unhandled exception within network receiver: {ex.Message}" });
+                   PrintToConsole($@"Unhandled exception within network receiver: {ex.Message}");
                 }
             }
 
@@ -429,7 +429,7 @@ namespace Cinegy.TsMuxer
                 }
                 catch (Exception ex)
                 {
-                    //Logger.Log(new TelemetryLogEventInfo { Level = LogLevel.Info, Message = $@"Unhandled exception within network receiver: {ex.Message}" });
+                   PrintToConsole($@"Unhandled exception within network receiver: {ex.Message}");
                 }
             }
 
