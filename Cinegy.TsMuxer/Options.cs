@@ -4,21 +4,9 @@ namespace Cinegy.TsMuxer
 {
     internal class Options
     {
-        [Option('l', "logfile", Required = false,
-        HelpText = "Optional file to record events to.")]
-        public string LogFile { get; set; }
-        
-        [Option('d', "descriptortags", Required = false, Default = "",
-        HelpText = "Comma separated tag values added to all log entries for instance and machine identification")]
-        public string DescriptorTags { get; set; }
-
-        [Option('t', "telemetry", Required = false,
-        HelpText = "Enable integrated telemetry")]
-
-        public bool Silent { get; set; }
         [Option("silent", Required = false,
         HelpText = "Silence console output")]
-        public bool SupressOutput { get; set; }
+        public bool SuppressOutput { get; set; }
 
     }
 
@@ -52,7 +40,11 @@ namespace Cinegy.TsMuxer
 
         [Option('r', "outputmulticastport", Required = true,
         HelpText = "Output multicast port number to send results to.")]
-        public int OuputMulticastPort { get; set; }
+        public int OutputMulticastPort { get; set; }
+
+        [Option('t', "outputmulticastttl", Required = false, Default = 1,
+        HelpText = "Output multicast time-to-live (router hops)")]
+        public int OutputMulticastTtl { get; set; }
 
         [Option('h', "nortpheaders", Required = false, Default = false,
         HelpText = "Optional instruction to skip the expected 12 byte RTP headers (meaning plain MPEGTS inside UDP is expected")]
