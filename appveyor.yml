@@ -1,0 +1,21 @@
+version: 1.0.{build}
+image: Visual Studio 2019
+configuration: Release
+dotnet_csproj:
+  patch: true
+  file: '**\*.csproj'
+  version: '{version}'
+  version_prefix: '{version}'
+  package_version: '{version}'
+  assembly_version: '{version}'
+  file_version: '{version}'
+  informational_version: '{version}'
+build:
+  project: Cinegy.TsAnalyser.sln
+  publish_core_console: true
+  verbosity: minimal
+after_build:
+- cmd: >-    
+    7z a Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip %APPVEYOR_BUILD_FOLDER%\Cinegy.TsMuxer\bin
+
+    appveyor PushArtifact Cinegy.TsMuxer-%APPVEYOR_REPO_BRANCH%-%APPVEYOR_BUILD_VERSION%-PDB.zip
