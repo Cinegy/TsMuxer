@@ -9,13 +9,12 @@
     <Description>Utility for re-muxing two UDP streams into a new single stream</Description>
     <Copyright>Cinegy GmbH</Copyright>
     <PackageTags>Transport Stream MPEGTS Muxer Multiplexer</PackageTags>
-    <PackageProjectUrl>https://github.com/Cinegy/TsAnalysis</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Cinegy/TsMuxer</PackageProjectUrl>
     <PackageReleaseNotes>Migrated to Net Core 3</PackageReleaseNotes>
     <NeutralLanguage />
-    <AssemblyName>TsMuxer</AssemblyName>
+    <AssemblyName>tsmuxer</AssemblyName>
     <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
     <RepositoryUrl>https://github.com/Cinegy/TsMuxer</RepositoryUrl>
-    <RuntimeIdentifiers>win-x64;linux-x64</RuntimeIdentifiers>
   </PropertyGroup>
 
 
@@ -28,7 +27,7 @@
 
   <ItemGroup>
     <PackageReference Include="Cinegy.TsDecoder" Version="3.0.124" />
-    <PackageReference Include="CommandLineParser" Version="2.6.0" />
+    <PackageReference Include="CommandLineParser" Version="2.7.82" />
   </ItemGroup>
 
   <ItemGroup>
