@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.Serialization;
 
 namespace Cinegy.TsMuxer.Logging
@@ -22,7 +21,7 @@ namespace Cinegy.TsMuxer.Logging
 
         [DataMember]
         public string ProductVersion
-            => FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).ProductVersion;
+            => FileVersionInfo.GetVersionInfo(AppContext.BaseDirectory).ProductVersion;
 
         [DataMember]
         public string EventKey { get; set; }

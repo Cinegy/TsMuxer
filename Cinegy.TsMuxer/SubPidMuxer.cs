@@ -36,9 +36,9 @@ namespace Cinegy.TsMuxer
         public int PrimaryBufferFullness => _ringBuffer.BufferFullness;
         public int SecondaryBufferFullness => _subRingBuffer.BufferFullness;
 
-        public SubPidMuxer(List<int> SubPids)
+        public SubPidMuxer(List<int> subPids)
         {
-            _subPids = SubPids;
+            _subPids = subPids;
 
             var queueThread = new Thread(ProcessQueueWorkerThread) {Priority = ThreadPriority.AboveNormal};
 
@@ -69,8 +69,6 @@ namespace Cinegy.TsMuxer
                 //add to buffer once we have a PCR, and set timestamp to the earliest playback time
                 var pcrDelta = _lastPcr - _referencePcr;
 
-                var span = new TimeSpan((long) (pcrDelta / 2.7));
-
                 //TODO: Hardcoded to 200ms buffer time currently
                 var broadcastTime = _referenceTime + (pcrDelta / 2.7) + ((TimeSpan.TicksPerSecond / 1000) * 20);
 
@@ -94,16 +92,13 @@ namespace Cinegy.TsMuxer
                 {
                     lock (_ringBuffer)
                     {
-                        int dataSize;
-                        ulong timestamp;
-
                         if (_ringBuffer.BufferFullness < 10)
                         {
                             Thread.Sleep(1);
                             continue;
                         }
 
-                        var capacity = _ringBuffer.Remove(ref dataBuffer, out dataSize, out timestamp);
+                        var capacity = _ringBuffer.Remove(ref dataBuffer, out var dataSize, out _);
 
                         if (capacity > 0)
                         {
@@ -127,11 +122,11 @@ namespace Cinegy.TsMuxer
                                 _mainStreamTargetPmt = _mainStreamDecoder.GetSelectedPmt();
 
                                 var pmtSpaceNeeded = 0;
-                                foreach (var esinfo in _subStreamSourcePmt.EsStreams)
+                                foreach (var esInfo in _subStreamSourcePmt.EsStreams)
                                 {
-                                    if (_subPids.Contains(esinfo.ElementaryPid))
+                                    if (_subPids.Contains(esInfo.ElementaryPid))
                                     {
-                                        pmtSpaceNeeded += esinfo.SourceData.Length;
+                                        pmtSpaceNeeded += esInfo.SourceData.Length;
                                     }
                                 }
 
@@ -149,22 +144,22 @@ namespace Cinegy.TsMuxer
                             if (_mainStreamTargetPmt != null && packet.Pid == _mainStreamTargetPmt.Pid)
                             {
                                 //this is the PMT for the target program on the target stream - patch in the substream PID entries
-                                foreach (var esinfo in _subStreamSourcePmt.EsStreams)
+                                foreach (var esInfo in _subStreamSourcePmt.EsStreams)
                                 {
-                                    if (_subPids.Contains(esinfo.ElementaryPid))
+                                    if (_subPids.Contains(esInfo.ElementaryPid))
                                     {
                                         //locate current SectionLength bytes in databuffer
                                         var pos = packet.SourceBufferIndex +
                                                   4; //advance to start of PMT data structure (past TS header)
                                         var pointerField = dataBuffer[pos];
                                         pos += pointerField; //advance by pointer field
-                                        var SectionLength =
+                                        var sectionLength =
                                             (short) (((dataBuffer[pos + 2] & 0x3) << 8) +
                                                      dataBuffer[pos + 3]); //get current length
 
                                         //increase length value by esinfo length
                                         var extendedSectionLength =
-                                            (short) (SectionLength + (short) esinfo.SourceData.Length);
+                                            (short) (sectionLength + (short) esInfo.SourceData.Length);
 
                                         //set back new length into databuffer                                        
                                         var bytes = BitConverter.GetBytes(extendedSectionLength);
@@ -173,12 +168,12 @@ namespace Cinegy.TsMuxer
                                         dataBuffer[pos + 3] = bytes[0];
 
                                         //copy esinfo source data to end of program block in pmt
-                                        Buffer.BlockCopy(esinfo.SourceData, 0, dataBuffer,
-                                            packet.SourceBufferIndex + 4 + pointerField + SectionLength,
-                                            esinfo.SourceData.Length);
+                                        Buffer.BlockCopy(esInfo.SourceData, 0, dataBuffer,
+                                            packet.SourceBufferIndex + 4 + pointerField + sectionLength,
+                                            esInfo.SourceData.Length);
 
                                         //correct CRC after each extension
-                                        var crcBytes = BitConverter.GetBytes(GenerateCRC(ref dataBuffer, pos + 1,
+                                        var crcBytes = BitConverter.GetBytes(GenerateCrc(ref dataBuffer, pos + 1,
                                             extendedSectionLength - 1));
                                         dataBuffer[packet.SourceBufferIndex + 4 + pointerField + extendedSectionLength]
                                             = crcBytes[3];
@@ -208,8 +203,6 @@ namespace Cinegy.TsMuxer
                                 {
                                     //candidate for wiping with any data queued up for muxing in
                                     byte[] subPidPacketBuffer = new byte[TsPacketSize];
-                                    int subPidDataSize = 0;
-                                    ulong subPidTimeStamp = 0;
 
                                     //see if there is any data waiting to get switched into the mux...
                                     lock (_subPidBuffer)
@@ -217,7 +210,7 @@ namespace Cinegy.TsMuxer
                                         if (_subPidBuffer.BufferFullness < 1)
                                             break; //double check here because prior check was not thread safe
                                         var subPidPacketDataReturned = _subPidBuffer.Remove(ref subPidPacketBuffer,
-                                            out subPidDataSize, out subPidTimeStamp);
+                                            out _, out _);
                                         if (subPidPacketDataReturned != 0 && subPidPacketDataReturned != TsPacketSize)
                                         {
                                             PrintToConsole("Sub PID data seems to not be size of TS packet!");
@@ -271,9 +264,8 @@ namespace Cinegy.TsMuxer
                             continue;
 
                         int dataSize;
-                        ulong timestamp;
 
-                        var capacity = _subRingBuffer.Remove(ref dataBuffer, out dataSize, out timestamp);
+                        var capacity = _subRingBuffer.Remove(ref dataBuffer, out dataSize, out _);
 
                         if (capacity > 0)
                         {
@@ -286,7 +278,9 @@ namespace Cinegy.TsMuxer
                         //check to see if there are any specific TS packets by PIDs we want to select
 
                         var packets = Factory.GetTsPacketsFromData(dataBuffer, dataSize, true, true);
-
+                        
+                        if (packets == null) return;
+                        
                         foreach (var packet in packets)
                         {
                             if (_subStreamDecoder.GetSelectedPmt() == null)
@@ -402,7 +396,7 @@ namespace Cinegy.TsMuxer
             return -1;
         }
 
-        private static uint GenerateCRC(ref byte[] dataBuffer, int position, int length)
+        private static uint GenerateCrc(ref byte[] dataBuffer, int position, int length)
         {
             var endPos = position + length;
             uint crc = uint.MaxValue;

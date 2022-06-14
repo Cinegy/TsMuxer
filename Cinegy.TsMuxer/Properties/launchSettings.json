@@ -2,7 +2,7 @@
   "profiles": {
     "Cinegy.TsMuxer": {
       "commandName": "Project",
-      "commandLineArgs": "-m 239.1.1.2 -p 1234 -n 239.1.1.1 -q 1234 -o 239.1.1.3 -r 1234 -a 10.183.2.228 -s 2049"
+      "commandLineArgs": "-m 239.186.32.42 -p 1234 -n 239.186.31.42 -q 1234 -o 239.186.33.42 -r 1234 -a 10.186.3.42 -s 1006"
     }
   }
 }

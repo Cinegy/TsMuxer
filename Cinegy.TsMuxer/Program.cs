@@ -1,5 +1,5 @@
 ﻿
-/*   Copyright 2019 Cinegy GmbH
+/*   Copyright 2019-2022 Cinegy GmbH
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Threading;
 using CommandLine;
 using static System.String;
@@ -51,7 +50,7 @@ namespace Cinegy.TsMuxer
         private static bool _suppressOutput;
 
         private static StreamOptions _options;
-        private static object consoleOutputLock = new object();
+        private static readonly object ConsoleOutputLock = new object();
 
         private static SubPidMuxer _muxer;
         
@@ -63,7 +62,7 @@ namespace Cinegy.TsMuxer
 
                 return result.MapResult(
                     Run,
-                    errs => CheckArgumentErrors());
+                    _ => CheckArgumentErrors());
             }
             catch (Exception ex)
             {
@@ -101,7 +100,7 @@ namespace Cinegy.TsMuxer
             
             Console.WriteLine(
                // ReSharper disable once AssignNullToNotNullAttribute
-               $"Cinegy TS Muxing tool (Built: {File.GetCreationTime(Assembly.GetExecutingAssembly().Location)})\n");
+               $"Cinegy TS Muxing tool (Built: {File.GetCreationTime(AppContext.BaseDirectory)})\n");
 
             _options = options;
 
@@ -135,7 +134,7 @@ namespace Cinegy.TsMuxer
             Thread.Sleep(40);
             while (!_pendingExit)
             {
-                lock (consoleOutputLock)
+                lock (ConsoleOutputLock)
                 {
                     Console.SetCursorPosition(0, 8);
                     Console.WriteLine($"Primary Stream Buffer fullness: {_muxer.PrimaryBufferFullness} \b \t\t\t");
