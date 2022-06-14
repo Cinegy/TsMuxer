@@ -90,14 +90,14 @@ namespace Cinegy.TsMuxer
             {
                 try
                 {
+                    if (_ringBuffer.BufferFullness < 10)
+                    {
+                        Thread.Sleep(1);
+                        continue;
+                    }
+
                     lock (_ringBuffer)
                     {
-                        if (_ringBuffer.BufferFullness < 10)
-                        {
-                            Thread.Sleep(1);
-                            continue;
-                        }
-
                         var capacity = _ringBuffer.Remove(ref dataBuffer, out var dataSize, out _);
 
                         if (capacity > 0)

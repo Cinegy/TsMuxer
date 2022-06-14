@@ -194,11 +194,6 @@ namespace Cinegy.TsMuxer
 
         }
         
-        private static void AddDataToRingBuffer(ref byte[] data)
-        {
-            _muxer.AddToPrimaryBuffer(ref data);
-        }
-
         private static UdpClient SetupInputUdpClient(EndPoint localEndpoint, string multicastAddress, IPAddress multicastAdapter)
         {
             var udpClient = new UdpClient { ExclusiveAddressUse = false };
@@ -245,7 +240,7 @@ namespace Cinegy.TsMuxer
                 }
                 try
                 {
-                    AddDataToRingBuffer(ref data);
+                    _muxer.AddToPrimaryBuffer(ref data);
                 }
                 catch (Exception ex)
                 {

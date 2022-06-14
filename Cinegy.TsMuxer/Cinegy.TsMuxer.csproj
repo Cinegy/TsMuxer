@@ -29,15 +29,12 @@
 
   <ItemGroup>
     <!--<PackageReference Include="Cinegy.TsDecoder" Version="3.0.133" />-->
+    <PackageReference Include="Cinegy.TsDecoder" Version="3.0.134" />
     <PackageReference Include="CommandLineParser" Version="2.9.1" />
   </ItemGroup>
 
   <ItemGroup>
     <Folder Include="Properties\" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\TSA\TsDecoder\Cinegy.TsDecoder\Cinegy.TsDecoder.csproj" />
   </ItemGroup>
 
 </Project>
