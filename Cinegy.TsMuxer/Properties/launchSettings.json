@@ -2,7 +2,7 @@
   "profiles": {
     "Cinegy.TsMuxer": {
       "commandName": "Project",
-      "commandLineArgs": "-m 239.186.32.42 -p 1234 -n 239.186.31.42 -q 1234 -o 239.186.33.42 -r 1234 -a 10.186.3.42 -s 1006"
+      "commandLineArgs": "--videosourceurl=udp://10.211.123.137@239.2.3.4:1236 --klvsourceurl=srt://10.211.118.94:6000 --outputurl=udp://10.211.123.137@239.1.2.3:1234"
     }
   }
 }

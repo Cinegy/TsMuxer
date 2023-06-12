@@ -1,291 +1,320 @@
-﻿
-/*   Copyright 2019-2022 Cinegy GmbH
+﻿/* Copyright 2019-2023 Cinegy GmbH.
 
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
 
-       http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
 */
 
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
-using System.Net.Sockets;
-using System.Threading;
-using CommandLine;
-using static System.String;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.Metrics;
 using System.Runtime;
+using Cinegy.TsMuxer.Helpers;
+using Cinegy.TsMuxer.SerializableModels.Settings;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using NLog;
+using NLog.Config;
+using NLog.Extensions.Hosting;
+using NLog.Extensions.Logging;
+using NLog.LayoutRenderers.Wrappers;
+using NLog.Layouts;
+using NLog.Targets;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using ILogger = NLog.ILogger;
+using LogLevel = NLog.LogLevel;
 
 namespace Cinegy.TsMuxer
 {
-    /// <summary>
-    /// This tool was created to allow testing of subtitle PIDs being muxed into a Cinegy TS output
-    /// 
-    /// Don't forget this EXE will need inbound firewall traffic allowed inbound - since multicast appears as inbound traffic...
-    /// 
-    /// Originally created by Lewis, so direct complaints his way.
-    /// </summary>
-    public class Program
+    internal class Program
     {
+        #region Constants
 
-        private enum ExitCodes
+        public const string EnvironmentVarPrefix = "CINEGYTSM";
+        public const string DirectoryAppName = "TsMuxer";
+        private static readonly string ProgramDataConfigFilePath;
+        private static readonly string ProgramDataDirectory;
+        private static readonly string BaseConfigFilePath;
+        private static readonly string WorkingConfigFilePath;
+        private static readonly string WorkingDirectory;
+
+        #endregion
+
+        #region Fields
+
+        private static IConfigurationRoot _configRoot;
+        private static IHost _host;
+        private static List<KeyValuePair<string,object>> _metricsTags = new();
+        private static readonly Meter MetricsMeter = new("Cinegy.TsMuxer");
+        private static readonly ObservableGauge<double> ServiceUptimeGauge;
+        private static readonly DateTime StartTime = DateTime.UtcNow;
+
+        #endregion
+
+        #region Constructors
+
+        static Program()
         {
-            SubPidError = 102,
-            UnknownError = 2000
+            WorkingDirectory = Path.GetDirectoryName(Process.GetCurrentProcess().MainModule?.FileName) ?? string.Empty;
+
+            if (OperatingSystem.IsWindows())
+            {
+                ProgramDataDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    $"Cinegy\\{DirectoryAppName}");
+            }
+            else
+            {
+                ProgramDataDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    $"Cinegy/{DirectoryAppName}");
+            }
+
+#if DEBUG
+            const string configFilename = "appsettings.Development.json";
+#else
+            const string configFilename = "appsettings.json";
+#endif
+
+            BaseConfigFilePath = Path.Combine(AppContext.BaseDirectory, configFilename);
+            WorkingConfigFilePath = Path.Combine(WorkingDirectory, configFilename);
+            ProgramDataConfigFilePath = Path.Combine(ProgramDataDirectory, configFilename);
+
+            ServiceUptimeGauge = MetricsMeter.CreateObservableGauge("tsMuxerUptime", () => new Measurement<double>(DateTime.UtcNow.Subtract(StartTime).TotalSeconds, _metricsTags), "sec");
         }
 
-        private static UdpClient _outputUdpClient;
-
-        private static bool _mainPacketsStarted;
-        private static bool _subPacketsStarted;
-        private static bool _pendingExit;
-        private static bool _suppressOutput;
-
-        private static StreamOptions _options;
-        private static readonly object ConsoleOutputLock = new object();
-
-        private static SubPidMuxer _muxer;
+        #endregion
         
-        private static int Main(string[] args)
-        {
-            try
-            {
-                var result = Parser.Default.ParseArguments<StreamOptions>(args);
+        #region Static members
 
-                return result.MapResult(
-                    Run,
-                    _ => CheckArgumentErrors());
-            }
-            catch (Exception ex)
-            {
-                Environment.ExitCode = (int)ExitCodes.UnknownError;
-                PrintToConsole("Unknown error: " + ex.Message);
-                throw;
-            }
-        }
-
-        private static int CheckArgumentErrors()
+        public static void Main(string[] args)
         {
-            //will print using library the appropriate help - now pause the console for the viewer
-            Console.WriteLine("Hit enter to quit");
-            Console.ReadLine();
-            return -1;
-        }
-
-        ~Program()
-        {
-            Console.CursorVisible = true;
-        }
-
-        private static void Console_CancelKeyPress(object sender, ConsoleCancelEventArgs e)
-        {
-            Console.CursorVisible = true;
-            if (_pendingExit) return; //already trying to exit - allow normal behaviour on subsequent presses
-            _pendingExit = true;
-            e.Cancel = true;
-        }
-
-        private static int Run(StreamOptions options)
-        {
-            Console.Clear();
-            Console.CancelKeyPress += Console_CancelKeyPress;
+            Console.CancelKeyPress += async delegate {
+                await _host?.StopAsync();
+                await _host?.WaitForShutdownAsync();
+            };
             
-            Console.WriteLine(
-               // ReSharper disable once AssignNullToNotNullAttribute
-               $"Cinegy TS Muxing tool (Built: {File.GetCreationTime(AppContext.BaseDirectory)})\n");
-
-            _options = options;
-
             GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
 
-            var subPids = new List<int>();
+            Activity.DefaultIdFormat = ActivityIdFormat.W3C;
+            var bufferedWarnings = PrepareConfigFile();
+            _configRoot = LoadConfiguration(ProgramDataConfigFilePath, args);
+            var logger = InitializeLogger();
 
-            foreach(var pid in _options.SubPids.Split(',')) { if (int.TryParse(pid, out var intPid)) subPids.Add(intPid); }
+            logger.Info("----------------------------------------");
+            logger.Info($"{Product.Name}: {Product.Version} (Built: {Product.BuildTime})");
+            logger.Info($"Executable directory: {WorkingDirectory}");
+            logger.Info($"Operating system: {Environment.OSVersion.Platform} ({Environment.OSVersion.VersionString})");
+            logger.Info($"Application data directory: {ProgramDataDirectory}");
+            
+            _metricsTags.Add(new KeyValuePair<string, object>("ProductVersion", Product.Version));
+            _metricsTags.Add(new KeyValuePair<string, object>("OS", $"{Environment.OSVersion.Platform}({Environment.OSVersion.VersionString})"));
 
-            if (subPids.Count < 1)
+            // since the logger was not available during the initial config file prep, log anything that got queued for display
+            foreach (var bufferedWarning in bufferedWarnings)
             {
-                Console.WriteLine("Provided sub PIDs argument did not contain one or more comma separated numbers - please check format");
-                return (int)ExitCodes.SubPidError;
+                logger.Warn(bufferedWarning);
             }
 
-            _suppressOutput = _options.SuppressOutput; //only suppresses extra logging to screen, not dynamic output
-
-            _muxer = new SubPidMuxer(subPids) {PrintErrorsToConsole = !_suppressOutput};
-
-            _muxer.PacketReady += _muxer_PacketReady;
-
-            Console.WriteLine($"Outputting multicast data to {_options.OutputMulticastAddress}:{_options.OutputMulticastPort} via adapter {_options.MulticastAdapterAddress}");
-            _outputUdpClient = PrepareOutputClient(_options.OutputMulticastAddress,_options.OutputMulticastPort,_options.MulticastAdapterAddress);
-            Console.WriteLine($"Listening for Primary Transport Stream on rtp://@{ _options.MainMulticastAddress}:{ _options.MainMulticastPort}");
-            StartListeningToPrimaryStream();
-            Console.WriteLine($"Listening for Sub Transport Stream on rtp://@{_options.SubMulticastAddress}:{_options.SubMulticastPort}");
-            StartListeningToSubStream();
-            
-            Console.CursorVisible = false;
-            
-            Thread.Sleep(40);
-            while (!_pendingExit)
+            try
             {
-                lock (ConsoleOutputLock)
-                {
-                    Console.SetCursorPosition(0, 8);
-                    Console.WriteLine($"Primary Stream Buffer fullness: {_muxer.PrimaryBufferFullness} \b \t\t\t");
-                    Console.WriteLine($"Sub Stream Buffer fullness:     {_muxer.SecondaryBufferFullness} \b \t\t\t");
-                    Console.WriteLine($"Sub Stream PID queue depth:     {_muxer.SecondaryPidBufferFullness} \b \t\t");
-                }
+                logger.Info($"Configuration running from {ProgramDataConfigFilePath}");
 
-                Thread.Sleep(40);
+                _host = CreateHostBuilder(args,logger).Build();
+
+                _host.Run();
             }
-
-            Console.CursorVisible = true;
-
-            return 0;
-
-        }
-
-        private static void _muxer_PacketReady(object sender, SubPidMuxer.PacketReadyEventArgs e)
-        {
-            _outputUdpClient.Send(e.UdpPacketData, e.UdpPacketData.Length);
-        }
-
-        private static void StartListeningToPrimaryStream()
-        {
-            var listenAddress = IsNullOrEmpty(_options.MulticastAdapterAddress) ? IPAddress.Any : IPAddress.Parse(_options.MulticastAdapterAddress);
-
-            var localEp = new IPEndPoint(listenAddress, _options.MainMulticastPort);
-
-            var udpClient = SetupInputUdpClient(localEp, _options.MainMulticastAddress, listenAddress);
-            
-            var ts = new ThreadStart(delegate
+            catch (Exception exception)
             {
-                PrimaryReceivingNetworkWorkerThread(udpClient, localEp);
-            });
-
-            var receiverThread = new Thread(ts) { Priority = ThreadPriority.Highest };
-
-            receiverThread.Start();
+                logger.Error(exception, "Stopped program because of exception");
+                throw;
+            }
+            finally
+            {
+                // Ensure to flush and stop internal timers/threads before application-exit (Avoid segmentation fault on Linux)
+                LogManager.Shutdown();
+            }
 
         }
         
-        private static void StartListeningToSubStream()
+        [RequiresUnreferencedCode("Calls Microsoft.Extensions.Configuration.ConfigurationBinder.Get<T>()")]
+        private static IHostBuilder CreateHostBuilder(string[] args, ILogger logger)
         {
-            var listenAddress = IsNullOrEmpty(_options.MulticastAdapterAddress) ? IPAddress.Any : IPAddress.Parse(_options.MulticastAdapterAddress);
+            var config = _configRoot.Get<AppConfig>();
+            
+            _metricsTags.Add(new KeyValuePair<string, object>("Ident", config.Ident));
 
-            var localEp = new IPEndPoint(listenAddress, _options.SubMulticastPort);
-
-            var udpClient = SetupInputUdpClient(localEp, _options.SubMulticastAddress, listenAddress);
-
-            var ts = new ThreadStart(delegate
+            if (!string.IsNullOrWhiteSpace(config.Label))
             {
-                SubReceivingNetworkWorkerThread(udpClient, localEp);
-            });
+                _metricsTags.Add(new KeyValuePair<string, object>("Label", config.Label));
+            }
 
-            var receiverThread = new Thread(ts) { Priority = ThreadPriority.Highest };
-
-            receiverThread.Start();
-
-        }
-        
-        private static UdpClient SetupInputUdpClient(EndPoint localEndpoint, string multicastAddress, IPAddress multicastAdapter)
-        {
-            var udpClient = new UdpClient { ExclusiveAddressUse = false };
-
-            udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            udpClient.Client.ReceiveBufferSize = 1500 * 3000;
-            udpClient.ExclusiveAddressUse = false;
-            udpClient.Client.Bind(localEndpoint);
-
-            var parsedMcastAddr = IPAddress.Parse(multicastAddress);
-            udpClient.JoinMulticastGroup(parsedMcastAddr, multicastAdapter);
-
-            return udpClient;
-        }
-
-        private static UdpClient PrepareOutputClient(string multicastAddress, int multicastPort, string outputAdapter)
-        {
-            var outputIp = outputAdapter != null ? IPAddress.Parse(outputAdapter) : IPAddress.Any;
-
-            var outputUdpClient = new UdpClient { ExclusiveAddressUse = false };
-            var localEp = new IPEndPoint(outputIp, multicastPort);
-
-            outputUdpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            outputUdpClient.Ttl = (short)_options.OutputMulticastTtl;
-            outputUdpClient.ExclusiveAddressUse = false;
-            outputUdpClient.Client.Bind(localEp);
-
-            var parsedMcastAddr = IPAddress.Parse(multicastAddress);
-            outputUdpClient.Connect(parsedMcastAddr, multicastPort);
-
-            return outputUdpClient;
-        }
-
-        private static void PrimaryReceivingNetworkWorkerThread(UdpClient client, IPEndPoint localEp)
-        {
-            while (!_pendingExit)
+            var hostnameVar = Environment.GetEnvironmentVariable($"{EnvironmentVarPrefix}_Hostname");
+            if (!string.IsNullOrWhiteSpace(hostnameVar))
             {
-                var data = client.Receive(ref localEp);
+                _metricsTags.Add(new KeyValuePair<string, object>("Hostname", hostnameVar));
+            }
 
-                if (!_mainPacketsStarted)
+            var telemetryInstanceId = Guid.NewGuid();
+
+            return Host.CreateDefaultBuilder(args)
+                .ConfigureAppConfiguration(configHost => { configHost.AddConfiguration(_configRoot); })
+                .ConfigureServices((hostContext, services) =>
                 {
-                    PrintToConsole("Started receiving primary multicast packets...");
-                    _mainPacketsStarted = true;
-                }
-                try
+                    if (config.Metrics?.Enabled == true && !Sdk.SuppressInstrumentation)
+                    {
+                        logger.Log(LogLevel.Info,$"Metrics enabled - tagged with instance ID: {telemetryInstanceId}");
+
+                        services.AddOpenTelemetry().WithMetrics(builder =>
+                        {
+                            builder
+                                .AddMeter("Cinegy.TsMuxer")
+                                .AddMeter($"Cinegy.TsMuxer.{nameof(MuxService)}")
+                                .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(Product.TracingName, config.Ident, Product.Version,false, telemetryInstanceId.ToString()));
+
+                            if (config.Metrics.ConsoleExporterEnabled)
+                            {
+                                logger.Info("Console metrics enabled - only recommended during debugging metrics issues...");
+                                builder.AddConsoleExporter();
+                            }
+
+                            if (config.Metrics.OpenTelemetryExporterEnabled)
+                            {
+                                logger.Info($"OpenTelemetry metrics exporter enabled, using endpoint: {config.Metrics.OpenTelemetryEndpoint}");
+                                builder.AddOtlpExporter((o, m) => {
+                                    o.Endpoint = new Uri(config.Metrics.OpenTelemetryEndpoint);
+                                    m.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = config.Metrics.OpenTelemetryPeriodicExportInterval;
+                                });
+                            }
+                        });
+                    }
+
+                    services.AddHostedService<MuxService>();
+                })
+                .ConfigureLogging(logging =>
                 {
-                    _muxer.AddToPrimaryBuffer(ref data);
-                }
-                catch (Exception ex)
+                    logging.ClearProviders();
+                    logging.AddOpenTelemetry(builder =>
+                    {
+                        builder.IncludeFormattedMessage = true;
+                        builder.IncludeScopes = true;
+                        builder.ParseStateValues = true;
+                        builder.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(Product.TracingName, config.Ident, Product.Version,false, telemetryInstanceId.ToString()));
+
+                        if (config.Metrics?.OpenTelemetryExporterEnabled == true)
+                        {
+                            builder.AddOtlpExporter(o => {
+                                o.Endpoint = new Uri(config.Metrics.OpenTelemetryEndpoint);
+                            });
+                        }
+                    });
+                })
+                .UseNLog();
+        }
+
+        private static List<string> PrepareConfigFile()
+        {
+            var bufferedLogWarnMessages = new List<string>();
+            if (ProgramDataConfigFilePath != null && File.Exists(ProgramDataConfigFilePath))
+            {
+                if (File.Exists(WorkingConfigFilePath) && File.GetLastWriteTime(WorkingConfigFilePath) > File.GetLastWriteTime(ProgramDataConfigFilePath))
                 {
-                    PrintToConsole($@"Unhandled exception within network receiver: {ex.Message}");
-                    return;
+                    if (File.Exists(ProgramDataConfigFilePath))
+                    {
+                        bufferedLogWarnMessages.Add("There was a problem reading the settings file, resetting to defaults");
+                        var programDataConfigFolder = Path.GetDirectoryName(ProgramDataConfigFilePath);
+                        if (ProgramDataConfigFilePath != null && Directory.Exists(programDataConfigFolder))
+                        {
+                            var backupFileSettingsName = $"{Path.GetFileName(ProgramDataConfigFilePath)}-backup_{DateTime.UtcNow.ToFileTimeUtc()}";
+                            bufferedLogWarnMessages.Add($"Problematic settings file has been copied to: {backupFileSettingsName}");
+                            File.Move(ProgramDataConfigFilePath!, Path.Combine(programDataConfigFolder!, backupFileSettingsName));
+                        }
+                    }
+
+                    bufferedLogWarnMessages.Add($"Performing import of newer settings from '{WorkingConfigFilePath}' file");
+                    File.Copy(WorkingConfigFilePath, ProgramDataConfigFilePath);
                 }
             }
-        }
-
-        private static void SubReceivingNetworkWorkerThread(UdpClient client, IPEndPoint localEp)
-        {
-            while (!_pendingExit)
+            else
             {
-                var data = client.Receive(ref localEp);
+                if (!Directory.Exists(ProgramDataDirectory))
+                    Directory.CreateDirectory(ProgramDataDirectory);
 
-                if (!_subPacketsStarted)
+                if (File.Exists(WorkingConfigFilePath))
                 {
-                    PrintToConsole("Started receiving sub multicast packets...");
-                    _subPacketsStarted = true;
+                    bufferedLogWarnMessages.Add($"Performing initial import of settings from '{WorkingConfigFilePath}' file to {ProgramDataConfigFilePath}");
+                    File.Copy(WorkingConfigFilePath, ProgramDataConfigFilePath!);
                 }
-
-                try
+                else
                 {
-                    _muxer.AddToSecondaryBuffer(ref data); 
-                }
-                catch (Exception ex)
-                {
-                    PrintToConsole($@"Unhandled exception within network receiver: {ex.Message}");
-                    return;
+                    bufferedLogWarnMessages.Add($"Performing import of default settings from '{BaseConfigFilePath}' file");
+                    File.Copy(BaseConfigFilePath, ProgramDataConfigFilePath!);
                 }
             }
+            return bufferedLogWarnMessages;
         }
-
-        private static void PrintToConsole(string message)
-        {
-            if (_suppressOutput)
-                return;
-
-            var currentLine = Console.CursorTop;
-            Console.SetCursorPosition(0, 13);
-            Console.WriteLine($" \b \b \b{message} \b \b \b \b");
-            Console.SetCursorPosition(0, currentLine);
         
+        private static ILogger InitializeLogger()
+        {
+            var logger = LogManager.Setup()
+                .LoadConfigurationFromSection(_configRoot)
+                .GetCurrentClassLogger();
+
+            if (LogManager.Configuration != null)
+            {
+                return logger;
+
+            }
+
+            LogManager.Configuration = new LoggingConfiguration();
+            ConfigurationItemFactory.Default.LayoutRenderers.RegisterDefinition("pad", typeof(PaddingLayoutRendererWrapper));
+
+            var layout = new SimpleLayout
+            {
+                Text = "${longdate} ${pad:padding=-10:inner=(${level:upperCase=true})} " +
+                       "${pad:padding=-20:fixedLength=true:inner=${logger:shortName=true}} " +
+                       "${message} ${exception:format=tostring}"
+            };
+
+            var consoleTarget = new ColoredConsoleTarget
+            {
+                UseDefaultRowHighlightingRules = true,
+                DetectConsoleAvailable = true,
+                Layout = layout
+            };
+
+            LogManager.Configuration.AddRule(LogLevel.Info, LogLevel.Fatal, consoleTarget, "Microsoft.Hosting.Lifetime");
+            LogManager.Configuration.AddRule(LogLevel.Trace, LogLevel.Info, new NullTarget(), "Microsoft.*", true);
+            LogManager.Configuration.AddRule(LogLevel.Info, LogLevel.Fatal, consoleTarget);
+
+            LogManager.ReconfigExistingLoggers();
+            return LogManager.GetCurrentClassLogger();
         }
 
+        private static IConfigurationRoot LoadConfiguration(string filepath, string[] args)
+        {
+            var configBuilder = new ConfigurationBuilder();
+            var config = configBuilder.AddJsonFile(filepath, false)
+                .AddCommandLine(args)
+                .AddEnvironmentVariables($"{EnvironmentVarPrefix}_")
+                .Build();
+
+            return config;
+        }
+
+        #endregion
     }
-
 }
