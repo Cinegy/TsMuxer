@@ -12,7 +12,7 @@ However, it works - although at the moment it is young and has not spent long be
 
 Well, we've added everything you need into a single teeny-tiny EXE again, which just depends on .NET 4.5. And then we gave it all a nice Apache license, so you can tinker and throw the tool wherever you need to on the planet.
 
-Just run the EXE from inside a command-prompt, and the application will just run - although you might want to provide it with some arguments.
+Just run the EXE from inside a command-prompt, and the application will just run - although you might want to provide it with some arguments too.
 
 ## Command line arguments:
 
